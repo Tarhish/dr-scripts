@@ -14,8 +14,8 @@
 	       required: Lich >= 4.6.14
 
 	changelog:
-      1.22
-        kill room_numbers if running through a room with peer_tags
+    1.22
+      kill room_numbers if running through a room with peer_tags
 		1.21f (2017-11-29):
 			fix DragonRealms drag feature
 		1.21 (2017-10-07):
