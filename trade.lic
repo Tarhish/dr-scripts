@@ -197,6 +197,7 @@ class Trade
   end
 
   def start_up # should parse contracts, check mats, handle expireds, get the caravan to a useful outpost, deliver any contracts, then begin the loop.
+    withdraw_coins(@caravan_coins_on_hand)
     unless caravan_exists?
       @use_stable && UserVars.last_seen_caravan['stabled'] ? get_caravan_stable : get_caravan
     end
@@ -264,7 +265,7 @@ class Trade
   def close_out_stable
     turn_in_items
     DRC.message('Heading out to find a stable for the night')
-    take_caravan_to(DRCT.tag_to_id('stable'))
+    take_caravan_to(DRCT.tag_to_id('caravan_stable'))
     store_item_in_box('balsa lumber') if @caravan_training_skills.include?('Engineering') && DRCI.exists?('balsa lumber')
     store_item_in_box(@outfitting_material_type) if @caravan_training_skills.include?('Outfitting') && DRCI.exists?(@outfitting_material_type)
     /(\d+) (Kronars|Lirums|Dokoras) for a caravan/ =~ bput('pay', 'The cost for stabling .*')
@@ -1066,7 +1067,7 @@ class Trade
       ]
       bput("tell #{@caravan.adjective} #{@caravan.noun} to #{command}", lead_success + lead_fail) == 'You pass on the order to lead to your driver' ? true : false
     when 'go faster'
-      bput("tell #{@caravan.adjective} #{@caravan.noun} to #{command}", 'You tell your driver')
+      pause 0.5 until bput("tell #{@caravan.adjective} #{@caravan.noun} to #{command}", 'speed up the pace,', 'speed up the pace\.') == 'speed up the pace,'
       true
     else
       false
@@ -1164,7 +1165,7 @@ class Trade
     else
       DRCT.walk_to('stable')
     end
-    case bput('RETURN CARAVAN', 'The clerk looks at you funny', 'Please rephrase', 'motions to a stable.+ who hurries off to a stall', 'You don\'t have anything')
+    case bput('RETURN CARAVAN', 'The clerk looks at you funny', 'Please rephrase', 'motions to a stable.+ who hurries off to a stall', 'You don\'t have anything', 'Your caravan is not at this')
     when 'Please rephrase', 'The clerk looks at you funny'
       UserVars.last_seen_caravan['stabled'] = false
       get_caravan_stable
@@ -1682,7 +1683,7 @@ class Trade
   end
 
   def should_knit?
-    @crafting_override['tailoring']['recipe'].include?('knitted') || DRSkill.getrank('Outfitting') > 550
+    @crafting_override['tailoring']['recipe'].include?('knitted') || DRSkill.getrank('Outfitting') < 550
   end
 
   def buy_yarn(crafting_data)
@@ -1753,7 +1754,7 @@ class Trade
   end
 
   def get_item(item)
-    get_crafting_item(item, @craft_bag, @craft_belt, @craft_belt)
+    get_crafting_item(item, @craft_bag, @craft_belt, @craft_belt, true)
   end
 
   def stow_item(item)
@@ -1817,7 +1818,7 @@ class Trade
     echo @crafted_item
     recipe = recipe_lookup(recipes, @crafted_item)
 
-    if bput("tap my #{@crafted_item.split.last} in my #{@craft_bag}", 'unfinished', 'You tap', 'I could not find') == 'unfinished'
+    if /unfinished/ =~ bput("tap my #{@crafted_item.split.last} in my #{@craft_bag}", 'You tap .*', 'I could not find')
       bput("get my #{@crafted_item.split.last} from my #{@craft_bag}", 'You get', 'What were', 'But that')
       pause 2 if Script.running?('bescort')
       if DRCI.in_hands?(@crafted_item.split.last)
@@ -1834,7 +1835,7 @@ class Trade
 
     if recipe['volume'] > @current_materials[@outfitting_material_type] || pins < 10 || thread < 100
       wipe_skill('Outfitting', @lead_training_skills)
-      return outfitting_cleanup
+      return
     else
       be_inside_caravan
       magic_cleanup
@@ -1854,10 +1855,11 @@ class Trade
       stow_item(left_hand) if left_hand
       open_storage_box
       suffix = "in my #{@craft_bag}" unless DRCI.in_hands?(@crafted_item.split.last)
-      if bput("tap my #{@crafted_item.split.last} #{suffix}", 'unfinished', "You tap .* #{@crafted_item.split.last}", 'I could not find') == 'unfinished'
+      case bput("tap my #{@crafted_item.split.last} #{suffix}", 'unfinished', "You tap .* #{@crafted_item.split.last}", 'I could not find') 
+      when /unfinished/
         get_item(@crafted_item.split.last) if suffix
         stow_item(@crafted_item.split.last)
-      else
+      when /You tap/
         dispose_item_caravan(@crafted_item.split.last)
       end
       bput("get my #{@outfitting_material_type}", 'You get', 'You pick up', 'You are already', 'What were you')
@@ -1909,10 +1911,14 @@ class Trade
     end
 
     if left_hand.include?(@crafted_item.split.last) || right_hand.include?(@crafted_item.split.last)
-      dispose_item_caravan(@crafted_item.split.last) unless bput("tap my #{@crafted_item.split.last}", 'unfinished', 'You tap', 'I could not find') == 'unfinished'
+      if /unfinished/ =~ bput("tap my #{@crafted_item.split.last}", 'unfinished', "You tap .* #{@crafted_item.split.last}", 'I could not find') 
+        stow_item(@crafted_item.split.last)
+      else
+        dispose_item_caravan(@crafted_item.split.last)
+      end
     end
 
-    if bput("tap my #{@crafted_item.split.last} in my #{@craft_bag}", 'unfinished', 'You tap', 'I could not find') == 'unfinished'
+    if /unfinished/ =~ bput("tap my #{@crafted_item.split.last} in my #{@craft_bag}", 'unfinished', 'You tap .*', 'I could not find')
       bput("get my #{@crafted_item.split.last} from my #{@craft_bag}", 'You get', 'What were', 'But that')
       pause 2 if Script.running?('bescort')
       if DRCI.in_hands?(@crafted_item.split.last)
@@ -1944,8 +1950,11 @@ class Trade
     pause 1
     stow_item(right_hand) if right_hand
     suffix = "in my #{@craft_bag}" unless DRCI.in_hands?(@crafted_item.split.last)
-    if bput("tap my #{@crafted_item.split.last} #{suffix}", 'unfinished', "You tap .* #{@crafted_item.split.last}", 'I could not find') == 'unfinished'
+    case bput("tap my #{@crafted_item.split.last} #{suffix}", 'unfinished', "You tap .* #{@crafted_item.split.last}", 'I could not find') 
+    when /unfinished/
       get_item(@crafted_item.split.last) if suffix
+      stow_item(@crafted_item.split.last)
+    when /You tap/
       dispose_item_caravan(@crafted_item.split.last)
     end
     stow_hands
